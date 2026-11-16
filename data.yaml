@@ -1,0 +1,13 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 4
+names: ['Giant Hogweed -Heracleum mantegazzianum-', 'Mayapple -Podophyllum peltatum-', 'Poison Hemlock -Conium maculatum-', 'Spotted Water Hemlock -Cicuta maculata-']
+
+roboflow:
+  workspace: ai-model-v2
+  project: object-detection-model-for-identification-of-poisonous-plants-in-the-chesapeake-bay-watershed-p8o4b
+  version: 2
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/ai-model-v2/object-detection-model-for-identification-of-poisonous-plants-in-the-chesapeake-bay-watershed-p8o4b/dataset/2
