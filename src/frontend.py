@@ -61,7 +61,6 @@ def count_plants(interface):
         if plant.get("hazard", "uncertain") == "dangerous"
     )
 
-    # Reconcile backend and frontend counts.
     backend_count = interface.get("dangerous_count")
 
     if (
@@ -101,9 +100,7 @@ def count_plants(interface):
 def set_status(interface):
 
     detections = interface.get("detections", [])
-
     close_plants = interface.get("close_plants", [])
-
     unsafe_area = interface.get("unsafe_area", False)
 
     uncertain_detected = any(
@@ -138,6 +135,29 @@ def set_status(interface):
 
 
 # --------------------------------------------------
+# SAFE DISTANCE FORMATTING
+# --------------------------------------------------
+
+def format_distance(distance_m):
+
+    if distance_m is None:
+        return "DISTANCE UNKNOWN"
+
+    try:
+        distance_m = float(distance_m)
+
+    except (TypeError, ValueError):
+        return "DISTANCE UNKNOWN"
+
+    if not math.isfinite(distance_m) or distance_m < 0:
+        return "DISTANCE UNKNOWN"
+
+    distance_ft = distance_m * 3.28084
+
+    return f"{distance_ft:.2f} ft"
+
+
+# --------------------------------------------------
 # RENDER DETECTIONS
 # --------------------------------------------------
 
@@ -166,8 +186,20 @@ def mark_up(interface):
             "hazard", "uncertain"
         )
 
-        confidence = float(
-            plant.get("confidence", 0.0)
+        try:
+            confidence = float(
+                plant.get("confidence", 0.0)
+            )
+
+        except (TypeError, ValueError):
+            confidence = 0.0
+
+        if not math.isfinite(confidence):
+            confidence = 0.0
+
+        confidence = max(
+            0.0,
+            min(confidence, 1.0)
         )
 
         bbox = plant.get("bbox")
@@ -175,7 +207,11 @@ def mark_up(interface):
         if bbox is None or len(bbox) != 4:
             continue
 
-        x1, y1, x2, y2 = map(int, bbox)
+        try:
+            x1, y1, x2, y2 = map(int, bbox)
+
+        except (TypeError, ValueError):
+            continue
 
         # Clamp coordinates to the frame.
         x1 = max(0, min(x1, width - 1))
@@ -187,21 +223,13 @@ def mark_up(interface):
             continue
 
         color = COLORS.get(
-            hazard, COLORS["uncertain"]
+            hazard,
+            COLORS["uncertain"]
         )
 
-        distance_m = plant.get("distance_m")
-
-        if (
-            distance_m is not None
-            and math.isfinite(float(distance_m))
-            and float(distance_m) >= 0
-        ):
-            distance_label = (
-                f"{float(distance_m) * 3.28084:.2f} ft"
-            )
-        else:
-            distance_label = "DISTANCE UNKNOWN"
+        distance_label = format_distance(
+            plant.get("distance_m")
+        )
 
         label = (
             f"{species} | {hazard.upper()} "
