@@ -30,6 +30,8 @@ from typing import Callable, Optional
 
 from ultralytics import YOLO
 
+from src import frontend
+
 
 # --------------------------------------------------
 # LOGGING CONFIGURATION
