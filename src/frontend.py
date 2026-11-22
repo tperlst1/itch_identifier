@@ -214,10 +214,9 @@ def mark_up(interface):
         distance_m = plant.get("distance_m")
 
         if distance_m is not None:
-
-            distance_ft = float(distance_m) * 3.28084
-
-            label += f" | {distance_ft:.2f} ft"
+            label += f" | {distance_m * 3.28084:.2f} ft"
+        else:
+            label += " | DISTANCE UNKNOWN"
 
         # Calculate label dimensions.
         (text_width, text_height), baseline = cv2.getTextSize(
