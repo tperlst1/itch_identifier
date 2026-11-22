@@ -433,12 +433,191 @@ class ItchIdentifier:
     # VIDEO CAPTURE
     # --------------------------------------------------
 
-    def capture(
-        self,
-        video_feed_path=0,
-        time_slow_down=0.01,
-        display_video=True,
-    ):
+
+def capture(
+    self,
+    video_feed_path=0,
+    time_slow_down=0.01,
+    display_video=True,
+):
+    """
+    Capture video, process plant detections,
+    evaluate safety conditions, and update
+    the frontend display.
+    """
+
+    from src import frontend
+
+    cap = cv2.VideoCapture(video_feed_path)
+
+    if not cap.isOpened():
+
+        cap.release()
+
+        raise RuntimeError(
+            f"Could not open video: {video_feed_path}"
+        )
+
+    self.paused = False
+    self.frame_number = 0
+
+    try:
+
+        while True:
+
+            if not self.paused:
+
+                success, frame = cap.read()
+
+                if not success:
+                    break
+
+                self.frame_number += 1
+
+                # ----------------------------------
+                # PRESERVE ORIGINAL FRAME
+                # ----------------------------------
+
+                raw_frame = frame.copy()
+
+                # ----------------------------------
+                # BACKEND: PLANT DETECTION
+                # ----------------------------------
+
+                annotated_frame, detections = self.annotate(
+                    frame.copy()
+                )
+
+                # ----------------------------------
+                # BACKEND: AREA SAFETY
+                # ----------------------------------
+
+                annotated_frame, unsafe, count = (
+                    self.area_signal(
+                        annotated_frame,
+                        detections
+                    )
+                )
+
+                # ----------------------------------
+                # BACKEND: PROXIMITY SAFETY
+                # ----------------------------------
+
+                annotated_frame, close_plants = (
+                    self.proximity_alert(
+                        annotated_frame,
+                        detections
+                    )
+                )
+
+                # ----------------------------------
+                # FRONTEND: INITIALIZE INTERFACE
+                # ----------------------------------
+
+                interface = frontend.initialize_interface()
+
+                interface["frame"] = raw_frame
+
+                interface["detections"] = detections
+
+                interface["unsafe_area"] = unsafe
+
+                interface["dangerous_count"] = count
+
+                interface["close_plants"] = close_plants
+
+                # ----------------------------------
+                # FRONTEND: COUNT DANGEROUS PLANTS
+                # ----------------------------------
+
+                interface = frontend.count_plants(
+                    interface
+                )
+
+                # ----------------------------------
+                # FRONTEND: GENERATE SAFETY STATUS
+                # ----------------------------------
+
+                interface = frontend.set_status(
+                    interface
+                )
+
+                # ----------------------------------
+                # FRONTEND: DRAW SPECIES LABELS
+                # ----------------------------------
+
+                interface = frontend.mark_up(
+                    interface
+                )
+
+                # ----------------------------------
+                # FINAL DISPLAY FRAME
+                # ----------------------------------
+
+                display_frame = interface["annotated_frame"]
+
+                # Display frame information.
+                cv2.putText(
+                    display_frame,
+                    (
+                        f"Frame: {self.frame_number} "
+                        f"| Objects: {len(detections)}"
+                    ),
+                    (15, 80),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.55,
+                    (255, 255, 255),
+                    2,
+                    cv2.LINE_AA
+                )
+
+                # Display video.
+                if display_video:
+
+                    cv2.imshow(
+                        "Itch Identifier",
+                        display_frame
+                    )
+
+            # --------------------------------------
+            # KEYBOARD CONTROLS
+            # --------------------------------------
+
+            if display_video:
+
+                key = cv2.waitKey(
+                    1 if not self.paused else 100
+                ) & 0xFF
+
+                if key == ord("p"):
+
+                    self.pause()
+
+                elif key == ord("q"):
+
+                    break
+
+            if not self.paused:
+
+                time.sleep(time_slow_down)
+
+    except KeyboardInterrupt:
+
+        logger.info("Itch Identifier stopped.")
+
+    finally:
+
+        cap.release()
+
+        if display_video:
+
+            cv2.destroyAllWindows()
+
+        logger.info(
+            "Itch Identifier processed %s frames.",
+            self.frame_number
+        )
+
 
         cap = cv2.VideoCapture(video_feed_path)
 
