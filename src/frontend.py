@@ -1,29 +1,26 @@
 
 """
-Itch Identifier - Frontend Module
+Itch Identifier - Frontend
 
 Responsibilities:
-    1. Display current safety status.
-    2. Display dangerous plant count.
-    3. Annotate detected plants with high-contrast labels.
+- Render detection bounding boxes.
+- Display species and confidence.
+- Display optional distance measurements.
+- Display dangerous plant count.
+- Display safety status.
 
-Backend integration:
-    ItchIdentifier.annotate()
-    ItchIdentifier.area_signal()
-    ItchIdentifier.proximity_alert()
+All detection and classification decisions
+are made by the backend.
 """
 
 import cv2
+import math
 
-
-# --------------------------------------------------
-# DISPLAY CONFIGURATION
-# --------------------------------------------------
 
 COLORS = {
-    "dangerous": (0, 0, 255),        # Red
-    "non-dangerous": (0, 200, 0),   # Green
-    "uncertain": (0, 165, 255),     # Orange
+    "dangerous": (0, 0, 255),
+    "non-dangerous": (0, 200, 0),
+    "uncertain": (0, 165, 255),
 }
 
 WHITE = (255, 255, 255)
@@ -31,7 +28,7 @@ BLACK = (0, 0, 0)
 
 
 # --------------------------------------------------
-# INITIALIZE FRONTEND
+# INITIALIZE INTERFACE
 # --------------------------------------------------
 
 def initialize_interface():
@@ -41,6 +38,7 @@ def initialize_interface():
         "detections": [],
         "unsafe_area": False,
         "dangerous_count": 0,
+        "dangerous_threshold": 10,
         "close_plants": [],
         "status_text": "",
         "status_color": WHITE,
@@ -50,27 +48,66 @@ def initialize_interface():
 
 
 # --------------------------------------------------
-# SET USER SAFETY STATUS
+# COUNT DANGEROUS PLANTS
 # --------------------------------------------------
 
-def set_status(interface):
-    """
-    Generate the user's current safety status.
-
-    Priority:
-        1. Dangerous plant within one foot.
-        2. More than 10 dangerous plants.
-        3. Uncertain plant detections.
-        4. No identified danger thresholds exceeded.
-    """
-
-    close_plants = interface.get("close_plants", [])
-    unsafe_area = interface.get("unsafe_area", False)
+def count_plants(interface):
 
     detections = interface.get("detections", [])
 
+    dangerous_count = sum(
+        1
+        for plant in detections
+        if plant.get("hazard", "uncertain") == "dangerous"
+    )
+
+    # Reconcile backend and frontend counts.
+    backend_count = interface.get("dangerous_count")
+
+    if (
+        backend_count is not None
+        and backend_count != dangerous_count
+    ):
+        raise ValueError(
+            "Backend/frontend dangerous plant count mismatch."
+        )
+
+    interface["dangerous_count"] = dangerous_count
+
+    threshold = interface.get(
+        "dangerous_threshold", 10
+    )
+
+    if dangerous_count > threshold:
+
+        interface["plant_count_text"] = (
+            f"DANGEROUS PLANTS: {dangerous_count} "
+            "- AREA UNSAFE"
+        )
+
+    else:
+
+        interface["plant_count_text"] = (
+            f"DANGEROUS PLANTS DETECTED: {dangerous_count}"
+        )
+
+    return interface
+
+
+# --------------------------------------------------
+# GENERATE SAFETY STATUS
+# --------------------------------------------------
+
+def set_status(interface):
+
+    detections = interface.get("detections", [])
+
+    close_plants = interface.get("close_plants", [])
+
+    unsafe_area = interface.get("unsafe_area", False)
+
     uncertain_detected = any(
-        plant.get("hazard", "uncertain").lower() == "uncertain"
+        plant.get("hazard", "uncertain") == "uncertain"
         for plant in detections
     )
 
@@ -101,75 +138,33 @@ def set_status(interface):
 
 
 # --------------------------------------------------
-# COUNT DANGEROUS PLANTS
-# --------------------------------------------------
-
-def count_plants(interface):
-    """
-    Count dangerous plants detected in the current frame.
-    """
-
-    detections = interface.get("detections", [])
-
-    dangerous_count = sum(
-        1
-        for plant in detections
-        if plant.get("hazard", "uncertain").lower() == "dangerous"
-    )
-
-    interface["dangerous_count"] = dangerous_count
-
-    if dangerous_count > 10:
-
-        count_text = (
-            f"DANGEROUS PLANTS: {dangerous_count} "
-            "- AREA UNSAFE"
-        )
-
-    else:
-
-        count_text = (
-            f"DANGEROUS PLANTS DETECTED: {dangerous_count}"
-        )
-
-    interface["plant_count_text"] = count_text
-
-    return interface
-
-
-# --------------------------------------------------
-# MARK UP DETECTED PLANTS
+# RENDER DETECTIONS
 # --------------------------------------------------
 
 def mark_up(interface):
-    """
-    Draw high-contrast bounding boxes and labels.
-
-    Labels include:
-        - Plant species
-        - Hazard classification
-        - Detection confidence
-        - Distance in feet, when available
-    """
 
     frame = interface.get("frame")
 
     if frame is None:
-        raise ValueError("No video frame supplied to frontend.")
-
-    detections = interface.get("detections", [])
+        raise ValueError(
+            "No video frame supplied to frontend."
+        )
 
     annotated_frame = frame.copy()
 
     height, width = annotated_frame.shape[:2]
 
+    detections = interface.get("detections", [])
+
     for plant in detections:
 
-        species = plant.get("species", "Unknown species")
+        species = plant.get(
+            "species", "Unknown species"
+        )
 
         hazard = plant.get(
             "hazard", "uncertain"
-        ).lower()
+        )
 
         confidence = float(
             plant.get("confidence", 0.0)
@@ -182,7 +177,7 @@ def mark_up(interface):
 
         x1, y1, x2, y2 = map(int, bbox)
 
-        # Keep coordinates within frame boundaries.
+        # Clamp coordinates to the frame.
         x1 = max(0, min(x1, width - 1))
         x2 = max(0, min(x2, width - 1))
         y1 = max(0, min(y1, height - 1))
@@ -195,35 +190,40 @@ def mark_up(interface):
             hazard, COLORS["uncertain"]
         )
 
-        # Draw bounding box.
+        distance_m = plant.get("distance_m")
+
+        if (
+            distance_m is not None
+            and math.isfinite(float(distance_m))
+            and float(distance_m) >= 0
+        ):
+            distance_label = (
+                f"{float(distance_m) * 3.28084:.2f} ft"
+            )
+        else:
+            distance_label = "DISTANCE UNKNOWN"
+
+        label = (
+            f"{species} | {hazard.upper()} "
+            f"| {confidence:.1%} "
+            f"| {distance_label}"
+        )
+
         cv2.rectangle(
             annotated_frame,
             (x1, y1),
             (x2, y2),
             color,
-            3
+            3,
         )
 
-        # Generate plant identification label.
-        label = (
-            f"{species} | {hazard.upper()} "
-            f"| {confidence:.1%}"
-        )
-
-        # Include distance when available.
-        distance_m = plant.get("distance_m")
-
-        if distance_m is not None:
-            label += f" | {distance_m * 3.28084:.2f} ft"
-        else:
-            label += " | DISTANCE UNKNOWN"
-
-        # Calculate label dimensions.
-        (text_width, text_height), baseline = cv2.getTextSize(
-            label,
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            2
+        (text_width, text_height), baseline = (
+            cv2.getTextSize(
+                label,
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.45,
+                2,
+            )
         )
 
         label_top = max(
@@ -241,30 +241,28 @@ def mark_up(interface):
             x1 + text_width + 10
         )
 
-        # Draw colored label background.
         cv2.rectangle(
             annotated_frame,
             (x1, label_top),
             (label_right, label_bottom),
             color,
-            -1
+            -1,
         )
 
-        # Draw white label text.
         cv2.putText(
             annotated_frame,
             label,
             (x1 + 5, label_top + text_height + 3),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
+            0.45,
             WHITE,
             2,
-            cv2.LINE_AA
+            cv2.LINE_AA,
         )
 
-    # --------------------------------------------------
-    # DISPLAY SAFETY STATUS
-    # --------------------------------------------------
+    # ----------------------------------------------
+    # SAFETY STATUS
+    # ----------------------------------------------
 
     status = interface.get("status_text", "")
 
@@ -272,15 +270,15 @@ def mark_up(interface):
         "status_color", WHITE
     )
 
-    if status:
+    cv2.rectangle(
+        annotated_frame,
+        (0, 0),
+        (width, 55),
+        BLACK,
+        -1,
+    )
 
-        cv2.rectangle(
-            annotated_frame,
-            (0, 0),
-            (width, 55),
-            BLACK,
-            -1
-        )
+    if status:
 
         cv2.putText(
             annotated_frame,
@@ -290,12 +288,12 @@ def mark_up(interface):
             0.6,
             status_color,
             2,
-            cv2.LINE_AA
+            cv2.LINE_AA,
         )
 
-    # --------------------------------------------------
-    # DISPLAY DANGEROUS PLANT COUNT
-    # --------------------------------------------------
+    # ----------------------------------------------
+    # DANGEROUS PLANT COUNT
+    # ----------------------------------------------
 
     count_text = interface.get(
         "plant_count_text", ""
@@ -311,7 +309,7 @@ def mark_up(interface):
             0.6,
             WHITE,
             2,
-            cv2.LINE_AA
+            cv2.LINE_AA,
         )
 
     interface["annotated_frame"] = annotated_frame
