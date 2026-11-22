@@ -16,7 +16,7 @@ def main():
 
     application = ItchIdentifier(
         model_path="models/best.pt",
-        device="cpu",
+        device="0",
         distance_estimator=None,
     )
 
