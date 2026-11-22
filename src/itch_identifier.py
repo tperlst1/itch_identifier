@@ -401,14 +401,35 @@ class ItchIdentifier:
 
    def proximity_alert(self, frame, detections):
 
-      PROXIMITY_THRESHOLD = 0.3048
-      
-      close_plants = [
-         plant for plant in detections
-         if plant.get("hazard") == "dangerous"
-         and plant.get("distance_m") is not None
-         and plant["distance_m"] < PROXIMITY_THRESHOLD
-      ]
+    proximity_threshold = 0.3048  # One foot in meters
+
+    close_plants = []
+
+    for plant in detections:
+
+        if plant.get("hazard") != "dangerous":
+            continue
+
+        # Retrieve distance calculated by distance()
+        distance_m = plant.get("distance_m")
+
+        if distance_m is None:
+            continue
+
+        if distance_m < proximity_threshold:
+            close_plants.append(plant)
+
+            cv2.putText(
+                frame,
+                "TOO CLOSE - MOVE AWAY",
+                (20, 120),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.8,
+                (0, 0, 255),
+                2
+            )
+
+    return frame, close_plants
 
     # --------------------------------------------------
     # VIDEO CAPTURE
