@@ -265,6 +265,20 @@ class ItchIdentifier:
 
         return frame, detections
 
+   def distance(self, frame, detections):
+   
+       for plant in detections:
+   
+           if plant.get("hazard") != "dangerous":
+               plant["distance_m"] = None
+               continue
+   
+           plant["distance_m"] = self.distance_estimator.estimate(
+               plant["bbox"]
+           )
+          
+   return detections
+   
     # --------------------------------------------------
     # DRAW SPECIES AND HAZARD LABELS
     # --------------------------------------------------
@@ -385,51 +399,37 @@ class ItchIdentifier:
     # PROXIMITY ALERT
     # --------------------------------------------------
 
-    def proximity_alert(
-        self,
-        frame,
-        detections,
-        proximity_threshold=None,
-    ):
-
-        if proximity_threshold is None:
-            proximity_threshold = self.PROXIMITY_THRESHOLD
-
-        too_close = []
-
-        for detection in detections:
-
-            if detection["hazard"] != "dangerous":
-                continue
-
-            distance = detection["distance_m"]
-
-            if distance is None:
-                continue
-
-            if distance < proximity_threshold:
-                too_close.append(detection)
-
-        if too_close:
-
-            message = (
-                "WARNING: TOO CLOSE TO "
-                "DANGEROUS PLANT! MOVE AWAY!"
-            )
-
-            cv2.putText(
-                frame,
-                message,
-                (20, 115),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.60,
-                (0, 0, 255),
-                3
-            )
-
-            logger.warning(message)
-
-        return frame, too_close
+   def proximity_alert(self, frame, detections):
+   
+       proximity_threshold = 0.3048  # One foot in meters
+   
+       close_plants = []
+   
+       for plant in detections:
+   
+           if plant.get("hazard") != "dangerous":
+               continue
+   
+           # Retrieve distance calculated by distance()
+           distance_m = plant.get("distance_m")
+   
+           if distance_m is None:
+               continue
+   
+           if distance_m < proximity_threshold:
+               close_plants.append(plant)
+   
+               cv2.putText(
+                   frame,
+                   "TOO CLOSE - MOVE AWAY",
+                   (20, 120),
+                   cv2.FONT_HERSHEY_SIMPLEX,
+                   0.8,
+                   (0, 0, 255),
+                   2
+               )
+   
+       return frame, close_plants
 
     # --------------------------------------------------
     # VIDEO CAPTURE
