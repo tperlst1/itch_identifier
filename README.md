@@ -197,6 +197,59 @@ Run the unit tests:
 pytest tests/ -v
 ```
 
+## Frontend Integration
+
+The frontend is implemented in `src/frontend.py` and integrates
+with the existing ItchIdentifier backend.
+
+### Frontend Functions
+
+| Function | Description |
+|---|---|
+| `initialize_interface()` | Initializes frontend display data. |
+| `set_status()` | Generates user safety messages. |
+| `count_plants()` | Counts dangerous plants in each frame. |
+| `mark_up()` | Draws species labels and color-coded bounding boxes. |
+
+### Display Classifications
+
+| Classification | Color |
+|---|---|
+| Dangerous | Red |
+| Non-dangerous | Green |
+| Uncertain | Orange |
+
+### Safety Alerts
+
+- More than 10 dangerous plants:
+  UNSAFE AREA - DO NOT PROCEED.
+
+- Dangerous plant within one foot:
+  DANGER: TOO CLOSE - MOVE AWAY.
+
+- Uncertain plant identification:
+  CAUTION: UNIDENTIFIED PLANTS DETECTED.
+
+### Running the Application
+
+```bash
+python main.py
+```
+
+### Running Tests
+
+```bash
+pytest tests/ -v
+```
+
+### Frontend Controls
+
+| Key | Function |
+|---|---|
+| P | Pause/resume video |
+| Q | Quit application |
+
+
 ## Limitations
 
 - Accuracy depends on training data quality.
