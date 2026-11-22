@@ -4,24 +4,24 @@ Itch Identifier - Backend
 Responsibilities:
 - YOLO plant detection
 - Species and hazard classification
-- Distance estimation (optional)
+- Optional distance estimation
 - Dangerous plant counting
 - Proximity and area safety alerts
 - Video capture and lifecycle management
 
-The frontend owns all visual annotation.
+The frontend owns visual annotation.
 """
 
 import cv2
 import time
 import logging
+import math
 
 from pathlib import Path
-from typing import Optional
-
 from ultralytics import YOLO
 
 from src import frontend
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -55,8 +55,6 @@ class ItchIdentifier:
 
         self.model_path = Path(model_path)
         self.device = device
-
-        # Preserve the injected estimator.
         self.distance_estimator = distance_estimator
 
         self.paused = False
@@ -93,11 +91,22 @@ class ItchIdentifier:
         device="cpu",
     ):
 
-        dataset_path = Path(dataset)
+        dataset_path = Path(dataset).resolve()
+        output_path = Path(output_dir).resolve()
 
         if not dataset_path.is_file():
             raise FileNotFoundError(
-                f"Dataset configuration not found: {dataset}"
+                f"Dataset configuration not found: {dataset_path}"
+            )
+
+        if epochs <= 0 or batch_size <= 0:
+            raise ValueError(
+                "Epochs and batch size must be positive."
+            )
+
+        if image_size <= 0:
+            raise ValueError(
+                "Image size must be positive."
             )
 
         model = YOLO("yolo11n.pt")
@@ -107,7 +116,7 @@ class ItchIdentifier:
             epochs=epochs,
             imgsz=image_size,
             batch=batch_size,
-            project=output_dir,
+            project=str(output_path),
             name="species_detection",
             device=device,
             patience=20,
@@ -115,7 +124,7 @@ class ItchIdentifier:
         )
 
         best_weights = (
-            Path(output_dir)
+            output_path
             / "species_detection"
             / "weights"
             / "best.pt"
@@ -123,7 +132,7 @@ class ItchIdentifier:
 
         if not best_weights.is_file():
             raise FileNotFoundError(
-                "Training completed but best.pt was not found."
+                f"Training weights not found: {best_weights}"
             )
 
         trained_model = YOLO(str(best_weights))
@@ -131,6 +140,7 @@ class ItchIdentifier:
         metrics = trained_model.val(
             data=str(dataset_path),
             imgsz=image_size,
+            device=device,
         )
 
         logger.info("Model training completed.")
@@ -145,10 +155,23 @@ class ItchIdentifier:
 
         return self.SPECIES_CLASSIFICATION.copy()
 
+    @staticmethod
+    def normalize_species_name(species):
+
+        return (
+            str(species)
+            .split(" -", 1)[0]
+            .strip()
+        )
+
     def label_function(self, species):
 
+        normalized = self.normalize_species_name(
+            species
+        )
+
         return self.classification_model.get(
-            species,
+            normalized,
             "uncertain"
         )
 
@@ -165,7 +188,9 @@ class ItchIdentifier:
     ):
 
         if frame is None:
-            raise ValueError("Input frame cannot be None.")
+            raise ValueError(
+                "Input frame cannot be None."
+            )
 
         model = (
             detection_model
@@ -179,14 +204,13 @@ class ItchIdentifier:
             else self.classification_model
         )
 
-        classify = (
-            label_function
-            if label_function is not None
-            else lambda species: classifications.get(
-                species,
+        if label_function is not None:
+            classify = label_function
+        else:
+            classify = lambda species: classifications.get(
+                self.normalize_species_name(species),
                 "uncertain"
             )
-        )
 
         results = model.predict(
             source=frame,
@@ -207,8 +231,13 @@ class ItchIdentifier:
 
         for box in result.boxes:
 
-            confidence = float(box.conf[0].item())
-            class_id = int(box.cls[0].item())
+            confidence = float(
+                box.conf[0].item()
+            )
+
+            class_id = int(
+                box.cls[0].item()
+            )
 
             species = result.names[class_id]
 
@@ -222,22 +251,25 @@ class ItchIdentifier:
 
             x1, y1, x2, y2 = coordinates.tolist()
 
-            # Never treat low-confidence predictions
-            # as confirmed dangerous species.
             if confidence < self.CONFIDENCE_THRESHOLD:
                 hazard = "uncertain"
             else:
                 hazard = classify(species)
 
-            detection = {
+            if hazard not in (
+                "dangerous",
+                "non-dangerous",
+                "uncertain",
+            ):
+                hazard = "uncertain"
+
+            detections.append({
                 "species": str(species),
                 "confidence": confidence,
                 "hazard": hazard,
                 "bbox": (x1, y1, x2, y2),
                 "distance_m": None,
-            }
-
-            detections.append(detection)
+            })
 
         return frame, detections
 
@@ -260,30 +292,31 @@ class ItchIdentifier:
 
                 estimator = self.distance_estimator
 
-                if callable(estimator) and not hasattr(
-                    estimator, "estimate"
-                ):
-                    distance_m = estimator(
+                if hasattr(estimator, "estimate"):
+                    value = estimator.estimate(
+                        plant["bbox"]
+                    )
+                elif callable(estimator):
+                    value = estimator(
                         plant["bbox"]
                     )
                 else:
-                    distance_m = estimator.estimate(
-                        plant["bbox"]
+                    raise TypeError(
+                        "Distance estimator must implement "
+                        "estimate(bbox) or be callable."
                     )
 
-                if distance_m is None:
+                if value is None:
                     plant["distance_m"] = None
                     continue
 
-                distance_m = float(distance_m)
+                value = float(value)
 
-                if distance_m < 0 or not (
-                    distance_m < float("inf")
-                ):
+                if not math.isfinite(value) or value < 0:
                     plant["distance_m"] = None
                     continue
 
-                plant["distance_m"] = distance_m
+                plant["distance_m"] = value
 
             except Exception:
 
@@ -331,23 +364,10 @@ class ItchIdentifier:
         )
 
         if unsafe_area:
-
-            message = (
-                f"UNSAFE AREA: {dangerous_count} "
-                "DANGEROUS PLANTS DETECTED!"
+            logger.warning(
+                "UNSAFE AREA: %s dangerous plants detected.",
+                dangerous_count
             )
-
-            cv2.putText(
-                frame,
-                message,
-                (20, 75),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.65,
-                (0, 0, 255),
-                3,
-            )
-
-            logger.warning(message)
 
         return frame, unsafe_area, dangerous_count
 
@@ -369,20 +389,21 @@ class ItchIdentifier:
             if distance_m is None:
                 continue
 
-            if distance_m < self.PROXIMITY_THRESHOLD:
+            try:
+                distance_m = float(distance_m)
+            except (TypeError, ValueError):
+                continue
 
+            if (
+                math.isfinite(distance_m)
+                and 0 <= distance_m < self.PROXIMITY_THRESHOLD
+            ):
                 close_plants.append(plant)
 
         if close_plants:
-
-            cv2.putText(
-                frame,
-                "TOO CLOSE - MOVE AWAY",
-                (20, 120),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.8,
-                (0, 0, 255),
-                2,
+            logger.warning(
+                "%s dangerous plant(s) within one foot.",
+                len(close_plants)
             )
 
         return frame, close_plants
@@ -406,7 +427,6 @@ class ItchIdentifier:
         cap = cv2.VideoCapture(video_feed_path)
 
         if not cap.isOpened():
-
             cap.release()
 
             raise RuntimeError(
@@ -420,14 +440,11 @@ class ItchIdentifier:
 
         try:
 
-            # Initialize frontend once per capture session.
             interface = frontend.initialize_interface()
 
             while True:
 
-                # --------------------------------------
                 # PAUSE / RESUME
-                # --------------------------------------
 
                 if self.paused:
 
@@ -446,9 +463,7 @@ class ItchIdentifier:
 
                     continue
 
-                # --------------------------------------
-                # READ VIDEO FRAME
-                # --------------------------------------
+                # READ FRAME
 
                 success, frame = cap.read()
 
@@ -458,9 +473,7 @@ class ItchIdentifier:
 
                 self.frame_number += 1
 
-                # --------------------------------------
-                # BACKEND DETECTION
-                # --------------------------------------
+                # DETECTION
 
                 _, detections = self.annotate(frame)
 
@@ -469,34 +482,30 @@ class ItchIdentifier:
                     detections
                 )
 
-                # --------------------------------------
                 # SAFETY CALCULATIONS
-                # --------------------------------------
 
                 _, unsafe_area, dangerous_count = (
                     self.area_signal(
-                        frame.copy(),
-                        detections,
+                        frame,
+                        detections
                     )
                 )
 
                 _, close_plants = self.proximity_alert(
-                    frame.copy(),
-                    detections,
+                    frame,
+                    detections
                 )
 
-                # --------------------------------------
                 # FRONTEND DATA CONTRACT
-                # --------------------------------------
 
                 interface["frame"] = frame
                 interface["detections"] = detections
                 interface["unsafe_area"] = unsafe_area
                 interface["dangerous_count"] = dangerous_count
-                interface["close_plants"] = close_plants
                 interface["dangerous_threshold"] = (
                     self.DANGEROUS_THRESHOLD
                 )
+                interface["close_plants"] = close_plants
 
                 interface = frontend.count_plants(
                     interface
@@ -510,27 +519,11 @@ class ItchIdentifier:
                     interface
                 )
 
-                # --------------------------------------
                 # DISPLAY
-                # --------------------------------------
 
                 annotated_frame = interface[
                     "annotated_frame"
                 ]
-
-                cv2.putText(
-                    annotated_frame,
-                    (
-                        f"Frame: {self.frame_number} "
-                        f"| Objects: {len(detections)} "
-                        f"| Dangerous: {dangerous_count}"
-                    ),
-                    (20, 80),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.6,
-                    (255, 255, 0),
-                    2,
-                )
 
                 if display_video:
 
