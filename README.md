@@ -22,29 +22,44 @@ risks to the user.
 - Dangerous plant counting.
 - Unsafe-area warning when more than 10 dangerous plants
   are detected in one frame.
+- Optional calibrated distance estimation.
 - Proximity alert when a dangerous plant is less than
-  one foot away.
+  one foot away, provided valid calibration is available.
 - Live video capture using OpenCV.
 - Pause and resume functionality.
 
 ## Repository Structure
 
 ```text
-itch-identifier/
-├── models/
+itch_identifier/
 ├── dataset/
+│   └── data.yaml
+│
+├── models/
+│   ├── best.pt
+│   └── ground_calibration.npz
+│
 ├── src/
 │   ├── __init__.py
-│   └── itch_identifier.py
+│   ├── itch_identifier.py
+│   ├── frontend.py
+│   └── distance_estimator.py
+│
 ├── tests/
 │   ├── __init__.py
 │   └── test_itch_identifier.py
+│
+├── runs/
+│
 ├── train.py
 ├── main.py
 ├── requirements.txt
 ├── .gitignore
 └── README.md
 ```
+
+The model and calibration files are optional repository
+artifacts and may be stored locally rather than committed.
 
 ## Technologies
 
@@ -61,9 +76,9 @@ itch-identifier/
 Clone the repository:
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/itch-identifier.git
+git clone https://github.com/tperlst1/itch_identifier.git
 
-cd itch-identifier
+cd itch_identifier
 ```
 
 Create a virtual environment:
@@ -89,7 +104,7 @@ source venv/bin/activate
 Install dependencies:
 
 ```bash
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
 ## Dataset
@@ -100,16 +115,33 @@ https://universe.roboflow.com/ai-model-v2/object-detection-model-for-identificat
 
 Download the dataset in YOLO format.
 
-Place the exported dataset in the dataset directory.
+Place the exported dataset in the location expected by
+`dataset/data.yaml`.
 
-Ensure that the dataset configuration is located at:
+Ensure the configuration is available at:
 
 ```text
 dataset/data.yaml
 ```
 
-Verify that the class names in data.yaml match the
-species names in the classification dictionary.
+The existing configuration defines four classes:
+
+| ID | Species |
+|---|---|
+| 0 | Giant Hogweed |
+| 1 | Mayapple |
+| 2 | Poison Hemlock |
+| 3 | Spotted Water Hemlock |
+
+Preserve the original class ordering.
+
+The dataset uses class names containing common names
+and scientific-name suffixes.
+
+The backend removes the scientific-name suffix before
+performing its classification lookup.
+
+Do not change class IDs without retraining the model.
 
 ## Model Training
 
@@ -119,17 +151,38 @@ Run:
 python train.py
 ```
 
-The trained model will be saved under:
+Optional arguments:
 
-```text
-runs/itch_identifier/species_detection/weights/best.pt
+```bash
+python train.py --epochs 100 --batch 16 --device cpu
 ```
 
-Copy best.pt into:
+For a compatible CUDA GPU:
+
+```bash
+python train.py --epochs 100 --batch 16 --device 0
+```
+
+The training process uses:
+
+```text
+dataset/data.yaml
+```
+
+Training outputs are stored under:
+
+```text
+runs/itch_identifier/species_detection/weights/
+```
+
+After successful training, the best model is automatically
+copied to:
 
 ```text
 models/best.pt
 ```
+
+The application uses this file for inference.
 
 ## Launching the Application
 
@@ -139,36 +192,54 @@ Run:
 python main.py
 ```
 
-The default video input is the computer's webcam.
+The default inference device is CPU.
 
-To use a prerecorded video, change:
+To use a compatible CUDA GPU:
 
-```python
-video_source = 0
+```bash
+ITCH_DEVICE=0 python main.py
 ```
 
-to:
+The default video input is the computer's webcam.
 
-```python
-video_source = "path/to/video.mp4"
+To use another camera:
+
+```bash
+ITCH_CAMERA=1 python main.py
+```
+
+To use a prerecorded video:
+
+```bash
+ITCH_CAMERA=videos/sample.mp4 python main.py
 ```
 
 ## Keyboard Controls
 
 | Key | Function |
-|-----|----------|
+|---|---|
 | P | Pause/resume |
-| Q | Quit |
+| Q | Quit application |
 
 ## Classification System
 
 | Label | Description |
-|-------|-------------|
-| Dangerous | Manually configured hazardous species |
-| Non-dangerous | Manually configured non-hazardous species |
+|---|---|
+| Dangerous | Species configured as hazardous |
+| Non-dangerous | Species explicitly configured as non-hazardous |
 | Uncertain | Unknown species or confidence below 95% |
 
 Unknown plants are never automatically assumed safe.
+
+The existing species classification dictionary is
+maintained in:
+
+```text
+src/itch_identifier.py
+```
+
+Only species explicitly configured in that dictionary
+receive confirmed hazard classifications.
 
 ## Area Safety Monitoring
 
@@ -176,40 +247,95 @@ Itch Identifier counts dangerous plant detections
 in each processed frame.
 
 When more than 10 dangerous plants are detected,
-the application displays an unsafe-area warning.
+the application displays:
+
+```text
+UNSAFE AREA - DO NOT PROCEED
+```
+
+The threshold is configured in the backend:
+
+```python
+DANGEROUS_THRESHOLD = 10
+```
+
+The frontend receives the same threshold through
+the interface dictionary.
 
 ## Proximity Monitoring
 
-The application supports a calibrated distance estimator.
+The application supports optional calibrated distance
+estimation through:
 
-When a dangerous plant is detected less than
-0.3048 meters (one foot) away, the application
-displays a warning to move away.
+```text
+src/distance_estimator.py
+```
 
-A calibrated depth camera or equivalent validated
-distance-measurement system is required.
+The calibration file is:
 
-## Testing
+```text
+models/ground_calibration.npz
+```
 
-Run the unit tests:
+The calibration matrix must map image coordinates
+to ground-plane coordinates expressed in meters.
+
+To enable distance estimation:
 
 ```bash
-pytest tests/ -v
+ITCH_ENABLE_DISTANCE=1 python main.py
 ```
+
+When a dangerous plant is estimated to be less than
+0.3048 meters (one foot) away, the application displays:
+
+```text
+DANGER: TOO CLOSE - MOVE AWAY
+```
+
+Without valid calibration, plant detection continues
+but distance-based proximity alerts remain disabled.
+
+A ground-plane homography does not provide general
+three-dimensional distance measurements.
+
+Calibration accuracy depends on camera placement,
+the ground plane, and the calibration reference points.
 
 ## Frontend Integration
 
-The frontend is implemented in `src/frontend.py` and integrates
-with the existing ItchIdentifier backend.
+The frontend is implemented in:
 
-### Frontend Functions
+```text
+src/frontend.py
+```
+
+It integrates with the backend through these functions:
 
 | Function | Description |
 |---|---|
-| `initialize_interface()` | Initializes frontend display data. |
-| `set_status()` | Generates user safety messages. |
-| `count_plants()` | Counts dangerous plants in each frame. |
-| `mark_up()` | Draws species labels and color-coded bounding boxes. |
+| `initialize_interface()` | Initializes frontend display data |
+| `count_plants()` | Counts dangerous plants |
+| `set_status()` | Generates user safety messages |
+| `mark_up()` | Draws labels and bounding boxes |
+
+The backend provides:
+
+- Video frame
+- Plant detections
+- Dangerous plant count
+- Unsafe-area status
+- Proximity alert data
+- Distance measurements
+
+The frontend produces:
+
+- Annotated video frame
+- Species labels
+- Confidence scores
+- Distance labels
+- Dangerous plant count
+- Safety status
 
 ### Display Classifications
 
@@ -222,33 +348,38 @@ with the existing ItchIdentifier backend.
 ### Safety Alerts
 
 - More than 10 dangerous plants:
-  UNSAFE AREA - DO NOT PROCEED.
+  `UNSAFE AREA - DO NOT PROCEED`
 
 - Dangerous plant within one foot:
-  DANGER: TOO CLOSE - MOVE AWAY.
+  `DANGER: TOO CLOSE - MOVE AWAY`
 
 - Uncertain plant identification:
-  CAUTION: UNIDENTIFIED PLANTS DETECTED.
+  `CAUTION: UNIDENTIFIED PLANTS DETECTED`
 
-### Running the Application
+## Testing
 
-```bash
-python main.py
-```
-
-### Running Tests
+Run the unit tests:
 
 ```bash
 pytest tests/ -v
 ```
 
-### Frontend Controls
+Check Python syntax:
 
-| Key | Function |
-|---|---|
-| P | Pause/resume video |
-| Q | Quit application |
+```bash
+python -m compileall -q src main.py train.py tests
+```
 
+The tests cover:
+
+- Species-name normalization.
+- Hazard classification.
+- Dangerous plant counting.
+- Area safety thresholds.
+- Optional distance estimation.
+- Proximity alerts.
+- Calibration validation.
+- Frontend/backend integration.
 
 ## Limitations
 
@@ -256,7 +387,7 @@ pytest tests/ -v
 - Only configured plant species receive confirmed
   hazard classifications.
 - Confidence scores require calibration.
-- Distance estimation requires calibrated hardware.
+- Distance estimation requires validated calibration.
 - Plant counts are per-frame detections, not unique
   tracked plants.
 - The system cannot guarantee that an area is safe.
@@ -267,5 +398,7 @@ application's output.
 
 ## License
 
-Add an appropriate license before distributing this
-project. Verify the dataset's licensing terms separately.
+Add an appropriate project license before distributing
+this application.
+
+Verify the Roboflow dataset licensing terms separately.
