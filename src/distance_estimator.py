@@ -4,8 +4,7 @@ Itch Identifier - Distance Estimator
 
 Uses a calibrated ground-plane homography.
 
-Important:
-A valid calibration must map image coordinates
+The homography must map image coordinates
 to ground-plane coordinates expressed in meters.
 """
 
@@ -29,7 +28,10 @@ class DistanceEstimator:
                 f"Calibration file not found: {calibration_path}"
             )
 
-        with np.load(calibration_path) as calibration:
+        with np.load(
+            calibration_path,
+            allow_pickle=False
+        ) as calibration:
 
             if "homography" not in calibration:
                 raise ValueError(
@@ -61,15 +63,22 @@ class DistanceEstimator:
         if bbox is None or len(bbox) != 4:
             return None
 
-        x1, y1, x2, y2 = map(float, bbox)
+        try:
 
-        if not np.isfinite([x1, y1, x2, y2]).all():
+            x1, y1, x2, y2 = map(float, bbox)
+
+        except (TypeError, ValueError):
+            return None
+
+        if not np.isfinite(
+            [x1, y1, x2, y2]
+        ).all():
             return None
 
         if x2 <= x1 or y2 <= y1:
             return None
 
-        # Approximate ground-contact point.
+        # Approximate the plant's ground-contact point.
         plant_x = (x1 + x2) / 2.0
         plant_y = y2
 
@@ -85,7 +94,9 @@ class DistanceEstimator:
 
         world_x, world_y = ground_point[0][0]
 
-        if not np.isfinite([world_x, world_y]).all():
+        if not np.isfinite(
+            [world_x, world_y]
+        ).all():
             return None
 
         distance_m = float(
